@@ -74,4 +74,4 @@ PLANET_COLORS = [
 
 # Make ship bigger/smaller:
 #   - Adjust SHIP_SIZE
-#   - Adjust BORDER_THICKNESS if needed
+#   - Adjust BORDER_THICKNESS if neede
