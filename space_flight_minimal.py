@@ -224,7 +224,7 @@ class Player:
         if arcade.key.RIGHT in keys_pressed:
             self.angle += ROTATION_SPEED * delta_time
         
-        # Handle rotation (mouse steering)
+        # Handle rotation (mouse steering with momentum)
         if target_angle is not None:
             # Calculate the shortest rotation direction
             angle_diff = target_angle - self.angle
@@ -235,17 +235,31 @@ class Player:
             while angle_diff < -180:
                 angle_diff += 360
             
-            # Rotate toward target angle with smooth rotation speed
-            rotation_speed = ROTATION_SPEED * 2  # Make mouse steering faster
-            if abs(angle_diff) < rotation_speed * delta_time:
-                # Close enough, snap to target
-                self.angle = target_angle
-            else:
-                # Rotate in the correct direction
+            # Smooth interpolation toward target angle (momentum system)
+            # The closer we are, the slower we rotate (creates natural deceleration)
+            max_rotation_speed = ROTATION_SPEED * 1.5
+            
+            # Scale rotation speed based on angle difference (momentum effect)
+            angle_factor = min(abs(angle_diff) / 45.0, 1.0)  # Normalize to 45-degree range
+            current_rotation_speed = max_rotation_speed * angle_factor
+            
+            # Apply minimum rotation speed to prevent getting stuck
+            min_rotation_speed = ROTATION_SPEED * 0.3
+            current_rotation_speed = max(current_rotation_speed, min_rotation_speed)
+            
+            if abs(angle_diff) < current_rotation_speed * delta_time:
+                # Close enough, but don't snap - use slower final approach
+                final_speed = ROTATION_SPEED * 0.5
                 if angle_diff > 0:
-                    self.angle += rotation_speed * delta_time
+                    self.angle += final_speed * delta_time
                 else:
-                    self.angle -= rotation_speed * delta_time
+                    self.angle -= final_speed * delta_time
+            else:
+                # Rotate in the correct direction with momentum
+                if angle_diff > 0:
+                    self.angle += current_rotation_speed * delta_time
+                else:
+                    self.angle -= current_rotation_speed * delta_time
         
         # Keep angle in reasonable range to prevent overflow
         self.angle = self.angle % 360
@@ -598,14 +612,18 @@ class SpaceFlightGame(arcade.Window):
         target_angle = None
         if self.mouse_steering:
             # Convert screen coordinates to world coordinates
+            # Note: Screen Y coordinates are flipped (0 at top), so we need to invert
+            screen_mouse_y = self.height - self.mouse_y  # Flip Y coordinate
             world_mouse_x = (self.mouse_x / SCREEN_SCALE) + self.camera.x
-            world_mouse_y = (self.mouse_y / SCREEN_SCALE) + self.camera.y
+            world_mouse_y = (screen_mouse_y / SCREEN_SCALE) + self.camera.y
             
             # Calculate angle from player to mouse cursor
             dx = world_mouse_x - self.player.x
             dy = world_mouse_y - self.player.y
             
             # Calculate target angle in degrees (atan2 returns radians)
+            # Note: atan2(y, x) gives angle from positive x-axis, but our ship points up (positive y)
+            # So we need to adjust: atan2(dx, dy) gives angle where 0° = up, 90° = right
             target_angle = math.degrees(math.atan2(dx, dy))
         
         # Update player with safety check
