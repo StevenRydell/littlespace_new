@@ -214,7 +214,7 @@ class Player:
         # Shooting state
         self.shoot_cooldown = 0.0
     
-    def update(self, delta_time, keys_pressed, target_angle=None):
+    def update(self, delta_time, keys_pressed, mouse_rotation=0):
         # Clamp delta_time to prevent issues with large time steps
         delta_time = min(delta_time, 0.1)  # Max 100ms per frame
         
@@ -224,42 +224,10 @@ class Player:
         if arcade.key.RIGHT in keys_pressed:
             self.angle += ROTATION_SPEED * delta_time
         
-        # Handle rotation (mouse steering with momentum)
-        if target_angle is not None:
-            # Calculate the shortest rotation direction
-            angle_diff = target_angle - self.angle
-            
-            # Normalize angle difference to [-180, 180]
-            while angle_diff > 180:
-                angle_diff -= 360
-            while angle_diff < -180:
-                angle_diff += 360
-            
-            # Smooth interpolation toward target angle (momentum system)
-            # The closer we are, the slower we rotate (creates natural deceleration)
-            max_rotation_speed = ROTATION_SPEED * 1.5
-            
-            # Scale rotation speed based on angle difference (momentum effect)
-            angle_factor = min(abs(angle_diff) / 45.0, 1.0)  # Normalize to 45-degree range
-            current_rotation_speed = max_rotation_speed * angle_factor
-            
-            # Apply minimum rotation speed to prevent getting stuck
-            min_rotation_speed = ROTATION_SPEED * 0.3
-            current_rotation_speed = max(current_rotation_speed, min_rotation_speed)
-            
-            if abs(angle_diff) < current_rotation_speed * delta_time:
-                # Close enough, but don't snap - use slower final approach
-                final_speed = ROTATION_SPEED * 0.5
-                if angle_diff > 0:
-                    self.angle += final_speed * delta_time
-                else:
-                    self.angle -= final_speed * delta_time
-            else:
-                # Rotate in the correct direction with momentum
-                if angle_diff > 0:
-                    self.angle += current_rotation_speed * delta_time
-                else:
-                    self.angle -= current_rotation_speed * delta_time
+        # Handle rotation (mouse steering - direct rotation)
+        if mouse_rotation != 0:
+            # Apply mouse rotation directly (mouse_rotation is dx from mouse movement)
+            self.angle += mouse_rotation
         
         # Keep angle in reasonable range to prevent overflow
         self.angle = self.angle % 360
@@ -456,8 +424,9 @@ class SpaceFlightGame(arcade.Window):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, "Little Space - Minimal Flight", resizable=True)
         arcade.set_background_color(arcade.color.BLACK)
         
-        # Hide the mouse cursor
+        # Hide the mouse cursor and capture it to the window
         self.set_mouse_visible(False)
+        self.set_exclusive_mouse(True)  # Capture mouse to prevent leaving window
         
         # Set frame rate to prevent performance issues
         self.set_update_rate(1/60)  # 60 FPS limit
@@ -474,9 +443,9 @@ class SpaceFlightGame(arcade.Window):
         self.enemies = []
         
         # Mouse control variables
-        self.mouse_x = 0
-        self.mouse_y = 0
         self.mouse_steering = True  # Enable mouse steering
+        self.mouse_sensitivity = 2.0  # Mouse rotation sensitivity
+        self.mouse_rotation = 0  # Current mouse rotation amount
         self.mouse_pressed = set()  # Track mouse button states
         
         # Performance and safety limits
@@ -608,27 +577,14 @@ class SpaceFlightGame(arcade.Window):
             if bullet:
                 self.bullets.append(bullet)
         
-        # Calculate target angle from mouse position
-        target_angle = None
-        if self.mouse_steering:
-            # Convert screen coordinates to world coordinates
-            # Note: Screen Y coordinates are flipped (0 at top), so we need to invert
-            screen_mouse_y = self.height - self.mouse_y  # Flip Y coordinate
-            world_mouse_x = (self.mouse_x / SCREEN_SCALE) + self.camera.x
-            world_mouse_y = (screen_mouse_y / SCREEN_SCALE) + self.camera.y
-            
-            # Calculate angle from player to mouse cursor
-            dx = world_mouse_x - self.player.x
-            dy = world_mouse_y - self.player.y
-            
-            # Calculate target angle in degrees (atan2 returns radians)
-            # Note: atan2(y, x) gives angle from positive x-axis, but our ship points up (positive y)
-            # So we need to adjust: atan2(dx, dy) gives angle where 0° = up, 90° = right
-            target_angle = math.degrees(math.atan2(dx, dy))
+        # Mouse steering uses relative movement (dx, dy) which is set in on_mouse_motion
+        # No angle calculation needed here - rotation is applied directly in Player.update()
         
         # Update player with safety check
         try:
-            self.player.update(delta_time, self.keys_pressed, target_angle)
+            self.player.update(delta_time, self.keys_pressed, self.mouse_rotation)
+            # Reset mouse rotation after applying it
+            self.mouse_rotation = 0
         except Exception:
             # Reset player if update fails
             self.player = Player(WORLD_WIDTH // 2, WORLD_HEIGHT // 2)
@@ -708,14 +664,24 @@ class SpaceFlightGame(arcade.Window):
         # Handle fullscreen toggle
         if key == arcade.key.F:
             self.toggle_fullscreen()
+        
+        # Handle escape key to release mouse capture
+        if key == arcade.key.ESCAPE:
+            self.release_mouse_capture()
+        
+        # Handle M key to re-enable mouse capture
+        if key == arcade.key.M:
+            self.capture_mouse()
     
     def on_key_release(self, key, modifiers):
         self.keys_pressed.discard(key)
     
     def on_mouse_motion(self, x, y, dx, dy):
         """Handle mouse movement for ship steering"""
-        self.mouse_x = x
-        self.mouse_y = y
+        if self.mouse_steering:
+            # Use dx (horizontal mouse movement) for ship rotation
+            # dx is the relative movement since last frame - perfect for rotation
+            self.mouse_rotation = dx * self.mouse_sensitivity
     
     def on_mouse_press(self, x, y, button, modifiers):
         """Handle mouse button press"""
@@ -728,6 +694,18 @@ class SpaceFlightGame(arcade.Window):
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode"""
         self.set_fullscreen(not self.fullscreen)
+    
+    def release_mouse_capture(self):
+        """Release mouse capture and show cursor (for debugging/exiting)"""
+        self.set_exclusive_mouse(False)
+        self.set_mouse_visible(True)
+        self.mouse_steering = False
+    
+    def capture_mouse(self):
+        """Capture mouse and enable steering"""
+        self.set_exclusive_mouse(True)
+        self.set_mouse_visible(False)
+        self.mouse_steering = True
     
     def on_resize(self, width, height):
         """Handle window resize with proper aspect ratio preservation"""
