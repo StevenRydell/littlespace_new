@@ -214,15 +214,38 @@ class Player:
         # Shooting state
         self.shoot_cooldown = 0.0
     
-    def update(self, delta_time, keys_pressed):
+    def update(self, delta_time, keys_pressed, target_angle=None):
         # Clamp delta_time to prevent issues with large time steps
         delta_time = min(delta_time, 0.1)  # Max 100ms per frame
         
-        # Handle rotation
+        # Handle rotation (keyboard)
         if arcade.key.LEFT in keys_pressed:
             self.angle -= ROTATION_SPEED * delta_time
         if arcade.key.RIGHT in keys_pressed:
             self.angle += ROTATION_SPEED * delta_time
+        
+        # Handle rotation (mouse steering)
+        if target_angle is not None:
+            # Calculate the shortest rotation direction
+            angle_diff = target_angle - self.angle
+            
+            # Normalize angle difference to [-180, 180]
+            while angle_diff > 180:
+                angle_diff -= 360
+            while angle_diff < -180:
+                angle_diff += 360
+            
+            # Rotate toward target angle with smooth rotation speed
+            rotation_speed = ROTATION_SPEED * 2  # Make mouse steering faster
+            if abs(angle_diff) < rotation_speed * delta_time:
+                # Close enough, snap to target
+                self.angle = target_angle
+            else:
+                # Rotate in the correct direction
+                if angle_diff > 0:
+                    self.angle += rotation_speed * delta_time
+                else:
+                    self.angle -= rotation_speed * delta_time
         
         # Keep angle in reasonable range to prevent overflow
         self.angle = self.angle % 360
@@ -231,8 +254,8 @@ class Player:
         angle_rad = math.radians(self.angle)
         
         # Handle thrust
-        self.thrusting_forward = arcade.key.UP in keys_pressed
-        self.thrusting_backward = arcade.key.DOWN in keys_pressed
+        self.thrusting_forward = arcade.key.UP in keys_pressed or arcade.key.W in keys_pressed
+        self.thrusting_backward = arcade.key.DOWN in keys_pressed or arcade.key.S in keys_pressed
         
         if self.thrusting_forward:
             thrust_x = math.sin(angle_rad) * ACCELERATION * delta_time
@@ -419,6 +442,9 @@ class SpaceFlightGame(arcade.Window):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, "Little Space - Minimal Flight", resizable=True)
         arcade.set_background_color(arcade.color.BLACK)
         
+        # Hide the mouse cursor
+        self.set_mouse_visible(False)
+        
         # Set frame rate to prevent performance issues
         self.set_update_rate(1/60)  # 60 FPS limit
         
@@ -432,6 +458,12 @@ class SpaceFlightGame(arcade.Window):
         self.keys_pressed = set()
         self.bullets = []
         self.enemies = []
+        
+        # Mouse control variables
+        self.mouse_x = 0
+        self.mouse_y = 0
+        self.mouse_steering = True  # Enable mouse steering
+        self.mouse_pressed = set()  # Track mouse button states
         
         # Performance and safety limits
         self.max_bullets = 8   # Reduced further to prevent performance issues
@@ -554,15 +586,31 @@ class SpaceFlightGame(arcade.Window):
         coord_text = f"X: {int(self.player.x)} Y: {int(self.player.y)}"
         self.coords_text.text = coord_text
         
-        # Handle shooting with limits
-        if arcade.key.SPACE in self.keys_pressed and len(self.bullets) < self.max_bullets:
+        # Handle shooting with limits (keyboard and mouse)
+        shooting = (arcade.key.SPACE in self.keys_pressed or 
+                   arcade.MOUSE_BUTTON_LEFT in self.mouse_pressed)
+        if shooting and len(self.bullets) < self.max_bullets:
             bullet = self.player.shoot()
             if bullet:
                 self.bullets.append(bullet)
         
+        # Calculate target angle from mouse position
+        target_angle = None
+        if self.mouse_steering:
+            # Convert screen coordinates to world coordinates
+            world_mouse_x = (self.mouse_x / SCREEN_SCALE) + self.camera.x
+            world_mouse_y = (self.mouse_y / SCREEN_SCALE) + self.camera.y
+            
+            # Calculate angle from player to mouse cursor
+            dx = world_mouse_x - self.player.x
+            dy = world_mouse_y - self.player.y
+            
+            # Calculate target angle in degrees (atan2 returns radians)
+            target_angle = math.degrees(math.atan2(dx, dy))
+        
         # Update player with safety check
         try:
-            self.player.update(delta_time, self.keys_pressed)
+            self.player.update(delta_time, self.keys_pressed, target_angle)
         except Exception:
             # Reset player if update fails
             self.player = Player(WORLD_WIDTH // 2, WORLD_HEIGHT // 2)
@@ -645,6 +693,19 @@ class SpaceFlightGame(arcade.Window):
     
     def on_key_release(self, key, modifiers):
         self.keys_pressed.discard(key)
+    
+    def on_mouse_motion(self, x, y, dx, dy):
+        """Handle mouse movement for ship steering"""
+        self.mouse_x = x
+        self.mouse_y = y
+    
+    def on_mouse_press(self, x, y, button, modifiers):
+        """Handle mouse button press"""
+        self.mouse_pressed.add(button)
+    
+    def on_mouse_release(self, x, y, button, modifiers):
+        """Handle mouse button release"""
+        self.mouse_pressed.discard(button)
     
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode"""
